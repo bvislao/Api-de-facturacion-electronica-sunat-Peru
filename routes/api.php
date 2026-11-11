@@ -4,6 +4,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\BoletaController;
+use App\Http\Controllers\Api\DailySummaryController;
+use App\Http\Controllers\Api\RetentionController;
+use App\Http\Controllers\Api\VoidedDocumentController;
 use App\Http\Controllers\Api\PdfController;
 use App\Http\Controllers\Api\CompanyConfigController;
 use App\Http\Controllers\Api\CompanyController;
@@ -14,6 +17,16 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ConsultaCpeController;
 use App\Http\Controllers\Api\SetupController;
 use App\Http\Controllers\Api\UbigeoController;
+use App\Http\Controllers\Api\TipoCambioController;
+use App\Http\Controllers\Api\NotificacionController;
+use App\Http\Controllers\Api\CompraController;
+use App\Http\Controllers\Api\BulkDocumentController;
+use App\Http\Controllers\Api\HistoricalImportController;
+use App\Http\Controllers\Api\SireController;
+use App\Http\Controllers\Api\CreditNoteController;
+use App\Http\Controllers\Api\DebitNoteController;
+use App\Http\Controllers\Api\DispatchGuideController;
+use App\Http\Controllers\Api\GreCredentialsController;
 
 // ========================
 // RUTAS PÚBLICAS (SIN AUTENTICACIÓN)
@@ -159,6 +172,75 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     });
 
     // ========================
+    // RESÚMENES DIARIOS (BOLETAS)
+    // ========================
+    Route::prefix('daily-summaries')->group(function () {
+        Route::get('/pending', [DailySummaryController::class, 'pending']);
+        Route::get('/', [DailySummaryController::class, 'index']);
+        Route::post('/', [DailySummaryController::class, 'store']);
+        Route::get('/{id}', [DailySummaryController::class, 'show']);
+        Route::post('/{id}/send-sunat', [DailySummaryController::class, 'sendToSunat']);
+        Route::post('/{id}/check-status', [DailySummaryController::class, 'checkStatus']);
+        Route::get('/{id}/download-xml', [DailySummaryController::class, 'downloadXml']);
+        Route::get('/{id}/download-cdr', [DailySummaryController::class, 'downloadCdr']);
+    });
+
+    // ========================
+    // RETENCIONES (TIPO 20)
+    // ========================
+    Route::prefix('retentions')->group(function () {
+        Route::get('/', [RetentionController::class, 'index']);
+        Route::post('/', [RetentionController::class, 'store']);
+        Route::get('/{id}', [RetentionController::class, 'show']);
+        Route::post('/{id}/send-sunat', [RetentionController::class, 'sendToSunat']);
+        Route::get('/{id}/download-xml', [RetentionController::class, 'downloadXml']);
+        Route::get('/{id}/download-cdr', [RetentionController::class, 'downloadCdr']);
+    });
+
+    // ========================
+    // COMUNICACIÓN DE BAJA (ANULACIONES)
+    // ========================
+    Route::prefix('voided-documents')->group(function () {
+        Route::get('/candidates', [VoidedDocumentController::class, 'candidates']);
+        Route::get('/', [VoidedDocumentController::class, 'index']);
+        Route::post('/', [VoidedDocumentController::class, 'store']);
+        Route::get('/{id}', [VoidedDocumentController::class, 'show']);
+        Route::post('/{id}/send-sunat', [VoidedDocumentController::class, 'sendToSunat']);
+        Route::post('/{id}/check-status', [VoidedDocumentController::class, 'checkStatus']);
+        Route::get('/{id}/download-xml', [VoidedDocumentController::class, 'downloadXml']);
+        Route::get('/{id}/download-cdr', [VoidedDocumentController::class, 'downloadCdr']);
+    });
+
+    // ========================
+    // REGISTRO DE COMPRAS (RECIBIDOS)
+    // ========================
+    Route::prefix('compras')->group(function () {
+        Route::get('/', [CompraController::class, 'index']);
+        Route::post('/', [CompraController::class, 'store']);
+        Route::post('/importar-xml', [CompraController::class, 'importarXml']);
+        Route::get('/{id}', [CompraController::class, 'show']);
+        Route::delete('/{id}', [CompraController::class, 'destroy']);
+        Route::get('/{id}/download-{formato}', [CompraController::class, 'download'])
+            ->whereIn('formato', ['xml', 'cdr', 'pdf']);
+        Route::post('/{id}/adjuntos', [CompraController::class, 'subirAdjunto']);
+    });
+
+    // ========================
+    // BUZÓN ELECTRÓNICO SUNAT / SUNAFIL
+    // ========================
+    Route::prefix('notificaciones')->group(function () {
+        Route::get('/', [NotificacionController::class, 'index']);
+        Route::post('/', [NotificacionController::class, 'store']);
+        Route::post('/sincronizar', [NotificacionController::class, 'sincronizar']);
+        Route::post('/{id}/marcar-leida', [NotificacionController::class, 'marcarLeida']);
+    });
+
+    // ========================
+    // TIPO DE CAMBIO (SUNAT)
+    // ========================
+    Route::get('/tipo-cambio', [TipoCambioController::class, 'show']);
+
+    // ========================
     // CONSULTA DE COMPROBANTES ELECTRÓNICOS (CPE)
     // ========================
     Route::prefix('consulta-cpe')->group(function () {
@@ -172,4 +254,88 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
         // Estadísticas de consultas
         Route::get('/estadisticas', [ConsultaCpeController::class, 'estadisticasConsultas']);
     });
+
+    // ========================
+    // CARGA MASIVA DE COMPROBANTES
+    // ========================
+    Route::prefix('bulk')->group(function () {
+        Route::post('/documentos', [BulkDocumentController::class, 'store']);
+        Route::get('/plantilla', [BulkDocumentController::class, 'plantilla']);
+    });
+
+    // ========================
+    // IMPORTACIÓN HISTÓRICA (PERÍODOS ANTERIORES)
+    // ========================
+    Route::prefix('historical')->group(function () {
+        Route::post('/importar', [HistoricalImportController::class, 'importar']);
+        Route::get('/plantilla', [HistoricalImportController::class, 'plantilla']);
+    });
+
+    // ========================
+    // PROPUESTA SIRE (RVIE / RCE)
+    // ========================
+    Route::prefix('sire')->group(function () {
+        Route::get('/ventas', [SireController::class, 'ventas']);
+        Route::get('/compras', [SireController::class, 'compras']);
+    });
+
+    // ========================
+    // NOTAS DE CRÉDITO
+    // ========================
+    Route::prefix('credit-notes')->group(function () {
+        Route::get('/catalogs/motivos', [CreditNoteController::class, 'catalogsMotivos']);
+        Route::get('/', [CreditNoteController::class, 'index']);
+        Route::post('/', [CreditNoteController::class, 'store']);
+        Route::get('/{id}', [CreditNoteController::class, 'show']);
+        Route::post('/{id}/send-sunat', [CreditNoteController::class, 'sendToSunat']);
+        Route::post('/{id}/generate-pdf', [CreditNoteController::class, 'generatePdf']);
+        Route::get('/{id}/download-xml', [CreditNoteController::class, 'downloadXml']);
+        Route::get('/{id}/download-cdr', [CreditNoteController::class, 'downloadCdr']);
+        Route::get('/{id}/download-pdf', [CreditNoteController::class, 'downloadPdf']);
+    });
+
+    // ========================
+    // NOTAS DE DÉBITO
+    // ========================
+    Route::prefix('debit-notes')->group(function () {
+        Route::get('/catalogs/motivos', [DebitNoteController::class, 'catalogsMotivos']);
+        Route::get('/', [DebitNoteController::class, 'index']);
+        Route::post('/', [DebitNoteController::class, 'store']);
+        Route::get('/{id}', [DebitNoteController::class, 'show']);
+        Route::post('/{id}/send-sunat', [DebitNoteController::class, 'sendToSunat']);
+        Route::post('/{id}/generate-pdf', [DebitNoteController::class, 'generatePdf']);
+        Route::get('/{id}/download-xml', [DebitNoteController::class, 'downloadXml']);
+        Route::get('/{id}/download-cdr', [DebitNoteController::class, 'downloadCdr']);
+        Route::get('/{id}/download-pdf', [DebitNoteController::class, 'downloadPdf']);
+    });
+
+    // ========================
+    // GUÍAS DE REMISIÓN
+    // ========================
+    Route::prefix('dispatch-guides')->group(function () {
+        Route::get('/catalogs/transfer-reasons', [DispatchGuideController::class, 'catalogsTransferReasons']);
+        Route::get('/catalogs/transport-modes', [DispatchGuideController::class, 'catalogsTransportModes']);
+        Route::get('/', [DispatchGuideController::class, 'index']);
+        Route::post('/', [DispatchGuideController::class, 'store']);
+        Route::get('/{id}', [DispatchGuideController::class, 'show']);
+        Route::post('/{id}/send-sunat', [DispatchGuideController::class, 'sendToSunat']);
+        Route::post('/{id}/generate-pdf', [DispatchGuideController::class, 'generatePdf']);
+        Route::get('/{id}/download-xml', [DispatchGuideController::class, 'downloadXml']);
+        Route::get('/{id}/download-cdr', [DispatchGuideController::class, 'downloadCdr']);
+        Route::get('/{id}/download-pdf', [DispatchGuideController::class, 'downloadPdf']);
+    });
+
+    // ========================
+    // CREDENCIALES GRE (GUÍAS DE REMISIÓN)
+    // ========================
+    Route::get('/gre-credentials/defaults/{modo}', [GreCredentialsController::class, 'defaults'])
+        ->whereIn('modo', ['beta', 'produccion']);
+    Route::prefix('companies/{company_id}/gre-credentials')->group(function () {
+        Route::get('/', [GreCredentialsController::class, 'show']);
+        Route::put('/', [GreCredentialsController::class, 'update']);
+        Route::post('/test-connection', [GreCredentialsController::class, 'testConnection']);
+        Route::delete('/clear', [GreCredentialsController::class, 'clear']);
+        Route::post('/copy', [GreCredentialsController::class, 'copy']);
+    });
+
 });

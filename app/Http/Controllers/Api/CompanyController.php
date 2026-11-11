@@ -25,7 +25,8 @@ class CompanyController extends Controller
                 ->select([
                     'id', 'ruc', 'razon_social', 'nombre_comercial', 
                     'direccion', 'distrito', 'provincia', 'departamento',
-                    'email', 'telefono', 'modo_produccion', 'activo',
+                    'email', 'telefono', 'usuario_sol', 'modo_produccion', 'activo',
+                    'contribuyente_amazonia', 'tipo_amazonia',
                     'created_at', 'updated_at'
                 ])
                 ->get();
@@ -105,6 +106,15 @@ class CompanyController extends Controller
     {
         try {
             $validatedData = $this->processRequestData($request);
+
+            // La UI no muestra los secretos: si llegan vacíos, se conservan.
+            foreach (['clave_sol', 'certificado_password'] as $secreto) {
+                $valor = $validatedData[$secreto] ?? null;
+                if (array_key_exists($secreto, $validatedData) && ($valor === '' || $valor === null)) {
+                    unset($validatedData[$secreto]);
+                }
+            }
+
             $company->update($validatedData);
 
             Log::info("Empresa actualizada exitosamente", [
@@ -250,13 +260,21 @@ class CompanyController extends Controller
     {
         $validatedData = $request->validated();
 
-        // Procesar booleanos
-        $validatedData['modo_produccion'] = $this->processBoolean($validatedData['modo_produccion'] ?? false);
-        $validatedData['activo'] = $this->processBoolean($validatedData['activo'] ?? true);
+        // Procesar booleanos solo si vienen: la actualización puede ser parcial
+        // (p. ej. el formulario de Accesos SOL no envía 'activo').
+        if (array_key_exists('modo_produccion', $validatedData)) {
+            $validatedData['modo_produccion'] = $this->processBoolean($validatedData['modo_produccion']);
+        }
+        if (array_key_exists('activo', $validatedData)) {
+            $validatedData['activo'] = $this->processBoolean($validatedData['activo']);
+        }
 
         // Procesar archivos
         if ($request->hasFile('certificado_pem')) {
-            $validatedData['certificado_pem'] = $this->storeFile($request->file('certificado_pem'), 'certificado', 'certificado.pem');
+            // Un archivo por empresa: antes se usaba un único 'certificado.pem'
+            // compartido, que se sobrescribía al dar de alta otra empresa.
+            $nombre = 'certificado_' . ($validatedData['ruc'] ?? 'empresa') . '.pem';
+            $validatedData['certificado_pem'] = $this->storeFile($request->file('certificado_pem'), 'certificado', $nombre);
         }
 
         if ($request->hasFile('logo_path')) {

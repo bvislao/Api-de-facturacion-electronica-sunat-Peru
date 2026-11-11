@@ -97,7 +97,7 @@ class DocumentService
                 'total_anticipos' => $totals['total_anticipos'],
                 'descuento_global' => $totals['descuento_global'],
                 'detalles' => $data['detalles'],
-                'leyendas' => $this->generateLegends($totals['mto_imp_venta'], $data['moneda'] ?? 'PEN', $data),
+                'leyendas' => $this->generateLegends($totals['mto_imp_venta'], $data['moneda'] ?? 'PEN', $data, $company),
                 'guias' => $data['guias'] ?? null,
                 'documentos_relacionados' => $data['documentos_relacionados'] ?? null,
                 'datos_adicionales' => $data['datos_adicionales'] ?? null,
@@ -168,7 +168,7 @@ class DocumentService
                 'sub_total' => $totals['sub_total'],
                 'mto_imp_venta' => $totals['mto_imp_venta'],
                 'detalles' => $data['detalles'],
-                'leyendas' => $this->generateLegends($totals['mto_imp_venta'], $data['moneda'] ?? 'PEN', $data),
+                'leyendas' => $this->generateLegends($totals['mto_imp_venta'], $data['moneda'] ?? 'PEN', $data, $company),
                 'datos_adicionales' => $data['datos_adicionales'] ?? null,
                 'usuario_creacion' => $data['usuario_creacion'] ?? null,
             ]);
@@ -515,7 +515,7 @@ class DocumentService
         }
     }
 
-    protected function generateLegends(float $total, string $moneda, array $data = []): array
+    protected function generateLegends(float $total, string $moneda, array $data = [], ?Company $company = null): array
     {
         $leyendas = [];
         
@@ -558,7 +558,46 @@ class DocumentService
             ];
         }
         
+
+        // Leyenda de Amazonía (catálogo n.º 52): obligatoria en las operaciones
+        // exoneradas del IGV de los contribuyentes de la Amazonía (Ley 27037).
+        $leyendaAmazonia = $this->leyendaAmazonia($data, $company);
+        if ($leyendaAmazonia !== null) {
+            $leyendas[] = $leyendaAmazonia;
+        }
         return $leyendas;
+    }
+
+    // Texto por tipo de operación de la leyenda de Amazonía.
+    protected const LEYENDAS_AMAZONIA = [
+        '2001' => 'BIENES TRANSFERIDOS EN LA AMAZONIA REGION SELVA PARA SER CONSUMIDOS EN LA MISMA',
+        '2002' => 'SERVICIOS PRESTADOS EN LA AMAZONIA REGION SELVA PARA SER CONSUMIDOS EN LA MISMA',
+        '2003' => 'CONTRATOS DE CONSTRUCCION EJECUTADOS EN LA AMAZONIA REGION SELVA',
+    ];
+
+    // Devuelve la leyenda de Amazonía si la empresa es contribuyente de la selva
+    // y el comprobante tiene operaciones exoneradas del IGV.
+    protected function leyendaAmazonia(array $data, ?Company $company): ?array
+    {
+        if (!$company || !$company->contribuyente_amazonia) {
+            return null;
+        }
+
+        $tieneExoneradas = false;
+        foreach ($data['detalles'] ?? [] as $detalle) {
+            if (($detalle['tip_afe_igv'] ?? null) === '20') {
+                $tieneExoneradas = true;
+                break;
+            }
+        }
+        if (!$tieneExoneradas) {
+            return null;
+        }
+
+        $tipo = $company->tipo_amazonia ?: '2001';
+        $texto = self::LEYENDAS_AMAZONIA[$tipo] ?? self::LEYENDAS_AMAZONIA['2001'];
+
+        return ['code' => $tipo, 'value' => $texto];
     }
     
     protected function hasGratuitasItems(array $detalles): bool
@@ -1192,6 +1231,7 @@ class DocumentService
                     'placa' => $data['vehiculo_placa'] ?? null,
                     'placa_principal' => $data['vehiculo_placa'] ?? null,
                     'placa_secundaria' => $data['vehiculo_placa_secundaria'] ?? null,
+                    'vehiculos_secundarios' => $data['vehiculos_secundarios'] ?? null,
                     'conductor' => $data['mod_traslado'] === '02' && !isset($data['indicadores']) ? [
                         'tipo' => $data['conductor_tipo'] ?? null,
                         'tipo_doc' => $data['conductor_tipo_doc'] ?? null,
@@ -1888,11 +1928,11 @@ class DocumentService
             
             // Guardar archivos
             if ($result['xml']) {
-                $retention->xml_path = $this->fileService->saveXml($retention, $result['xml'], 'retention');
+                $retention->xml_path = $this->fileService->saveXml($retention, $result['xml']);
             }
             
             if ($result['success'] && $result['cdr_zip']) {
-                $retention->cdr_path = $this->fileService->saveCdr($retention, $result['cdr_zip'], 'retention');
+                $retention->cdr_path = $this->fileService->saveCdr($retention, $result['cdr_zip']);
                 $retention->hash_cdr = $result['cdr_response']->getId() ?? '';
                 $retention->estado_sunat = 'ACEPTADO';
             } else {
@@ -1932,8 +1972,9 @@ class DocumentService
                            ->where('id', $data['branch_id'])
                            ->firstOrFail();
             
-            // Obtener siguiente correlativo para la fecha
-            $correlativo = $this->getNextVoidedDocumentCorrelative($company->id, $data['fecha_referencia']);
+            // Obtener siguiente correlativo para la fecha de comunicación
+            $fechaComunicacion = now()->toDateString();
+            $correlativo = $this->getNextVoidedDocumentCorrelative($company->id, $fechaComunicacion);
             
             // Crear comunicación de baja
             $voidedDocument = VoidedDocument::create([
@@ -1941,7 +1982,7 @@ class DocumentService
                 'branch_id' => $branch->id,
                 'tipo_documento' => 'RA',
                 'correlativo' => $correlativo,
-                'fecha_emision' => now()->toDateString(), // Fecha de comunicación (hoy)
+                'fecha_emision' => $fechaComunicacion, // Fecha de comunicación (hoy)
                 'fecha_referencia' => $data['fecha_referencia'], // Fecha de documentos a anular
                 'ubl_version' => $data['ubl_version'] ?? '2.0',
                 'detalles' => $data['detalles'],
@@ -2157,11 +2198,11 @@ class DocumentService
         ];
     }
 
-    protected function getNextVoidedDocumentCorrelative(int $companyId, string $fechaReferencia): string
+    protected function getNextVoidedDocumentCorrelative(int $companyId, string $fechaEmision): string
     {
-        // Obtener el último correlativo para la fecha de referencia
+        // El correlativo del RA es por fecha de comunicación.
         $lastVoided = VoidedDocument::where('company_id', $companyId)
-                                  ->whereDate('fecha_referencia', $fechaReferencia)
+                                  ->whereDate('fecha_emision', $fechaEmision)
                                   ->orderBy('correlativo', 'desc')
                                   ->first();
         
